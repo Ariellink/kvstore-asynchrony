@@ -1,14 +1,11 @@
 use crate::thread_pool::ThreadPool;
 use crate::{KvsEngine, Request, Response, Result};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::AtomicBool;
 //use serde::Deserialize;
 use log::{debug, error, info};
 use serde::Deserialize;
 use std::fmt;
 use std::io::BufReader;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use std::time::SystemTime;
 
 pub enum EngineType {
