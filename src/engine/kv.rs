@@ -267,7 +267,8 @@ impl KvsEngine for KvStore {
             }
         });
         match rx.await {
-            Ok(_) => Ok(()),
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(e),
             Err(e) => {
                 Err(KVStoreError::ServerError(format!("{}",e)))
             }
@@ -317,7 +318,8 @@ impl KvsEngine for KvStore {
             }
         });
         match rx.await {
-            Ok(_) => Ok(()),
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(e),
             Err(e) => {
                 Err(KVStoreError::ServerError(format!("{}",e)))
             }

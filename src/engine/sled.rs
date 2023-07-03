@@ -1,3 +1,6 @@
+use async_trait::async_trait;
+use log::error;
+use tokio::sync::oneshot;
 use crate::{KVStoreError, KvsEngine, Result};
 use std::path::PathBuf;
 
@@ -16,27 +19,75 @@ impl SledKvStore {
     }
 }
 
+#[async_trait]
 impl KvsEngine for SledKvStore {
-    fn set(&self, key: String, value: String) -> Result<()> {
-        self.inner.insert(key, value.into_bytes())?; //into_bytes return the vec
-        self.inner.flush()?;
-        Ok(())
+    async fn set(&self, key: String, value: String) -> Result<()> {
+        let db = self.inner.clone();
+        let (tx,rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let res = db.insert(key, value.into_bytes());
+            if tx.send(res).is_err() {
+                error!("receiving end was dropped during sled set operation");
+            }
+        });
+
+        match rx.await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(KVStoreError::SledError(e)),
+            Err(e) => Err(KVStoreError::ServerError(format!("{}",e))),
+        }
     }
 
-    fn get(&self, key: String) -> Result<Option<String>> {
-        let val = self
-            .inner
-            .get(key)?
-            .map(|vec| vec.to_vec())
-            .map(String::from_utf8)
-            .transpose()?; //utf8 errors !!!
-        Ok(val) //String和IVec
+    async fn get(&self, key: String) -> Result<Option<String>> {
+        let db = self.inner.clone();
+        let (tx,rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let res = tokio::task::spawn_blocking(move ||{
+                let val = self
+                .inner
+                .get(key)?
+                .map(|vec| vec.to_vec())
+                .map(String::from_utf8)
+                .transpose()?; //utf8 errors
+                //Result::<_>::Ok(val)
+                Result::<Option<String>>::Ok(val)
+            })
+            .await
+            .map_err(|join_error| KVStoreError::ServerError(format!("JoinError: {}", join_error)));
+             
+            if tx.send(res).is_err() {
+                error!("receiving end was dropped during sled get operation");
+            }
+        });
+
+        match rx.await {
+            Ok(Ok(val)) => val,
+            Ok(Err(e)) => Err(e),
+            Err(e) => Err(KVStoreError::ServerError(format!("{}",e))),
+        }    
     }
 
-    fn remove(&self, key: String) -> Result<()> {
+    async fn remove(&self, key: String) -> Result<()> {
         // Db::remove only returns if it existed.
-        self.inner.remove(key)?.ok_or(KVStoreError::KeyNotFound)?;
-        self.inner.flush()?;
-        Ok(())
+        let db = self.inner.clone();
+        let (tx,rx) = oneshot::channel();
+        tokio::spawn(async move {
+             let res = tokio::task::spawn_blocking(move ||{
+                db.remove(key)?.ok_or(KVStoreError::KeyNotFound)?;
+                self.inner.flush()?;
+                Result::<_>::Ok(())
+            })
+            .await
+            .map_err(|join_error| KVStoreError::ServerError(format!("JoinError: {}", join_error)));
+            if tx.send(res).is_err() {
+                error!("receiving end was dropped during sled remove operation");
+            }
+        });
+
+        match rx.await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(e) => Err(KVStoreError::ServerError(format!("{}",e))),
+        }
     }
 }
