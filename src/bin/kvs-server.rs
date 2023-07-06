@@ -1,10 +1,11 @@
 use clap::{arg, command, ArgMatches};
-use kvs::thread_pool::{NaiveThreadPool, RayonThreadPool, SharedQueueThreadPool, ThreadPool};
+//use kvs::thread_pool::{NaiveThreadPool, RayonThreadPool, SharedQueueThreadPool, ThreadPool};
 use kvs::{EngineType, KVStoreError, KvServer, KvStore, KvsEngine, Result, SledKvStore};
 use log::{info, LevelFilter};
 use std::env;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     //logger
     env_logger::builder().filter_level(LevelFilter::Info).init();
     //get the args
@@ -19,10 +20,11 @@ fn main() -> Result<()> {
         .arg(
             arg!(-e --engine <engine_name> "sled or kvs")
                 .required(false)
-                .value_parser(["kvs", "sled"]),
+                .value_parser(["kvs", "sled"])
+                .default_value("kvs"),
         )
         .get_matches();
-    if let Err(err) = init(matches) {
+    if let Err(err) = init(matches).await {
         eprint!("{:?}", err);
         std::process::exit(-1);
     }
@@ -30,30 +32,31 @@ fn main() -> Result<()> {
 }
 
 //parse matches
-fn init(matches: ArgMatches) -> Result<()> {
+async fn init(matches: ArgMatches) -> Result<()> {
     let addr = matches.get_one::<String>("addr").unwrap();
     let engine_type_userspecified = matches.get_one::<String>("engine");
 
     //logger
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
     info!("Addr: [{}]", addr);
+    println!("hello");
     info!(
         "EngineTypeSpecifiedByUser: [{}]",
         engine_type_userspecified.unwrap()
     );
-
+    println!("world");
     let engine_type = judge_engine(engine_type_userspecified.cloned())?;
     info!("engine_type: [{}]", engine_type);
 
     match engine_type {
         EngineType::KvStore => run_server(
-            KvStore::open(env::current_dir()?.join(EngineType::KvStore.to_string()))?,
+            KvStore::open(env::current_dir()?.join(EngineType::KvStore.to_string()),num_cpus::get().try_into().unwrap())?,
             addr,
-        ),
+        ).await,
         EngineType::SledKvStore => run_server(
             SledKvStore::open(env::current_dir()?.join(EngineType::SledKvStore.to_string()))?,
             addr,
-        ),
+        ).await,
     }
 }
 
@@ -87,12 +90,12 @@ fn judge_engine(engine_type: Option<String>) -> Result<EngineType> {
 
 //构造并运行KvsServer实例并监听处理stream在server()函数
 //engine: 是KvStore实例或者是SledKvStore实例
-fn run_server<E>(engine: E, addr: &String) -> Result<()>
+async fn run_server<E>(engine: E, addr: &String) -> Result<()>
 where
-    E: KvsEngine,
+    E: KvsEngine + std::marker::Sync,
 {
     info!("running server with engine_type");
-    let mut server = KvServer::new(engine, SharedQueueThreadPool::new(num_cpus::get())?);
-    server.serve(addr)?;
+    let mut server = KvServer::new(engine);
+    server.serve(addr).await?;
     Ok(())
 }

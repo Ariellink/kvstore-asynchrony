@@ -43,13 +43,11 @@ impl KvsEngine for SledKvStore {
         let (tx,rx) = oneshot::channel();
         tokio::spawn(async move {
             let res = tokio::task::spawn_blocking(move ||{
-                let val = self
-                .inner
+                let val = db
                 .get(key)?
                 .map(|vec| vec.to_vec())
                 .map(String::from_utf8)
                 .transpose()?; //utf8 errors
-                //Result::<_>::Ok(val)
                 Result::<Option<String>>::Ok(val)
             })
             .await
@@ -74,7 +72,7 @@ impl KvsEngine for SledKvStore {
         tokio::spawn(async move {
              let res = tokio::task::spawn_blocking(move ||{
                 db.remove(key)?.ok_or(KVStoreError::KeyNotFound)?;
-                self.inner.flush()?;
+                db.flush()?;
                 Result::<_>::Ok(())
             })
             .await

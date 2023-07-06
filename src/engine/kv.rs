@@ -2,13 +2,12 @@ use crate::KvsEngine;
 use dashmap::DashMap;
 use log::{info, warn, error};
 use serde_json;
-//use std::cell::RefCell;
+use std::cell::RefCell;
 use std::fs::{self, remove_file, OpenOptions};
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Take, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-//use std::sync::Mutex;
 use std::time::SystemTime;
 use std::{collections::hash_map::Entry, collections::HashMap, fs::File};
 
@@ -16,25 +15,26 @@ use std::{collections::hash_map::Entry, collections::HashMap, fs::File};
 use async_trait::async_trait;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
-use std::sync::RwLock;
+use crossbeam::queue::ArrayQueue;
+
 #[derive(Debug)]
 struct CommandPos {
     offset: u64,
     length: u64,
     file_id: u64,
 }
-
 #[derive(Clone)]
 pub struct KvStore {
     // key：String， vaule_metadata: CommandPos
     index: Arc<DashMap<String, CommandPos>>,
-    current_readers: Arc<Reader>,
+    //current_readers: Arc<RwLock<Reader>>,
     current_writer: Arc<Mutex<Writer>>,
+    reader_pool: Arc<ArrayQueue<Reader>>, //why arrayqueue?
 } 
 
 pub struct Writer {
     dir_path: Arc<PathBuf>,
-    current_readers: Arc<Reader>,
+    current_readers: Reader,
     current_writer: BufWriterWithPos<File>,
     current_file_id: u64,
     size_for_compaction: u64,
@@ -44,7 +44,7 @@ pub struct Writer {
 pub struct Reader {
     dir_path: Arc<PathBuf>,
     compaction_number: Arc<AtomicU64>,
-    readers: RwLock<HashMap<u64, BufReader<File>>>,
+    readers: RefCell<HashMap<u64, BufReader<File>>>,
 }
 
 impl Clone for Reader {
@@ -52,7 +52,7 @@ impl Clone for Reader {
         Reader {
             dir_path: Arc::clone(&self.dir_path),
             compaction_number: Arc::clone(&self.compaction_number),
-            readers: RwLock::new(HashMap::new()),
+            readers: RefCell::new(HashMap::new()),
         }
     }
 }
@@ -139,7 +139,7 @@ impl KvStore {
     //env::current_dir()? -> PathBuf
     //open(parameter)：impl Into<PathBuf> trait, which means that para in open func must be transferred to PathBuf
 
-    pub fn open(open_path: impl Into<PathBuf>) -> Result<KvStore> {
+    pub fn open(open_path: impl Into<PathBuf>, concurrency: u32) -> Result<KvStore> {
         let dir_path = Arc::new(open_path.into());
 
         fs::create_dir_all(&dir_path.as_path())?;
@@ -229,24 +229,29 @@ impl KvStore {
                 BufReader::new(File::open(&current_file_path)?),
             );
         }
-        let current_readers = Arc::new(Reader {
+        let reader = Reader {
             dir_path: Arc::clone(&dir_path),
             compaction_number: Arc::new(AtomicU64::new(0)),
-            readers: RwLock::new(readers),
-        });
+            readers: RefCell::new(readers),
+        };
 
         let current_writer = Arc::new(Mutex::new(Writer {
             dir_path,
-            current_readers: Arc::clone(&current_readers),
+            current_readers: reader.clone(),
             current_writer,
             current_file_id,
             size_for_compaction,
             index: Arc::clone(&index),
         }));
+        let reader_pool = Arc::new(ArrayQueue::new(concurrency as usize));
+        for _ in 1..concurrency {
+            reader_pool.push(reader.clone());
+        }
+        reader_pool.push(reader);
 
         let store = KvStore {
             index,
-            current_readers,
+            reader_pool,
             current_writer,
         };
 
@@ -257,15 +262,31 @@ impl KvStore {
 #[async_trait]
 impl KvsEngine for KvStore {
     async fn set(&self, key: String, value: String) -> Result<()> {
+        info!("in set func");
         let writer = Arc::clone(&self.current_writer);
+        info!("writer has been cloned");
         let (tx, rx) = oneshot::channel();
-        tokio::spawn(async move {
-            let lock = writer.lock().await;
+        info!("tx = {:#?}, rx = {:#?}, channel has been created",tx, rx);
+        
+        let handle = tokio::spawn(async move {
+            println!("in set func - tokio task");
+            let mut lock = writer.lock().await;
+            println!("lock has been acquired");
             let result = lock.set(key, value);
+
+            println!("result = {:#?}", result);
             if tx.send(result).is_err() {
                 error!("receiving end is drop during set operation");
             }
+            info!("in set func - tokio task - done");
         });
+        
+        let r = handle.await;
+
+        info!("r = {:#?}", r);
+
+        //}
+        //Ok(())
         match rx.await {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) => Err(e),
@@ -279,7 +300,7 @@ impl KvsEngine for KvStore {
         //clone index
         let index = Arc::clone(&self.index);
         //clone reader
-        let reader = Arc::clone(&self.current_readers);
+        let reader = Arc::clone(&self.reader_pool);
         let (tx, rx) = oneshot::channel();
         // spawn a new task, handover the control to runtime
         // check if the key exists in the index on the instance - Some - None
@@ -289,7 +310,7 @@ impl KvsEngine for KvStore {
             let res = {
                 if let Some(val) = index.get(&key){
                     //read process
-                    reader.read_command(val.value())
+                    reader.pop().unwrap().read_command(val.value())
                 } else {
                     Ok(None)
                 }
@@ -311,7 +332,7 @@ impl KvsEngine for KvStore {
         let writer = Arc::clone(&self.current_writer);
         let (tx, rx) = oneshot::channel();
         tokio::spawn (async move {
-            let lock = writer.lock().await;
+            let mut lock = writer.lock().await;
             let result = lock.remove(key);
             if tx.send(result).is_err() {
                 error!("receiving end is drop during remove operation");
@@ -425,7 +446,8 @@ impl Writer {
         self.current_readers
             .compaction_number
             .store(self.current_file_id, Ordering::SeqCst);
-        self.current_readers
+        
+       self.current_readers
             .remove_useless_reader_in_writer(self.current_file_id)?;
         self.size_for_compaction = 0;
         self.create_new_file()?;
@@ -451,7 +473,7 @@ impl Writer {
         self.current_writer = BufWriterWithPos::new(new_file)?;
 
         //update the current_reader by inserting <the newest file_id, Bufreader>
-        self.current_readers.readers.write().unwrap().insert(
+        self.current_readers.readers.borrow_mut().insert(
             self.current_file_id,
             BufReader::new(File::open(&new_file_path)?),
         );
@@ -477,7 +499,7 @@ impl Reader {
     {
         self.try_to_remove_stale_readers_in_reader();
 
-        let mut readers = self.readers.write().unwrap();
+        let mut readers = self.readers.borrow_mut();
         //check if reader exists, if not, open it
         if let Entry::Vacant(entry) = readers.entry(postion.file_id) {
             let new_reader = BufReader::new(File::open(
@@ -499,7 +521,7 @@ impl Reader {
 
     //删除小于file_id的所有文件在writer中
     fn remove_useless_reader_in_writer(&mut self, file_id: u64) -> Result<()> {
-        let mut readers = self.readers.write().unwrap();
+        let mut readers = self.readers.borrow_mut();
 
         let deleted_file_ids: Vec<u64> = readers
             .iter()
@@ -521,7 +543,7 @@ impl Reader {
 
     fn try_to_remove_stale_readers_in_reader(&self) {
         let compaction_number = self.compaction_number.load(Ordering::SeqCst);
-        let mut readers = self.readers.write().unwrap();
+        let mut readers = self.readers.borrow_mut();
         //delete the readers older than compaction_number
         readers.retain(|&k, _| k >= compaction_number);
     }
