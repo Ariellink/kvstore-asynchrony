@@ -22,7 +22,6 @@ async fn main() -> Result<()> {
                 .arg(arg!(<KEY>).help("A String key").required(true))
                 .arg(
                     arg!(-a --addr <ipport> "example: 127.0.0.1:4000")
-                        .required(true)
                         .default_value("127.0.0.1:4000"),
                 ),
         )
@@ -33,7 +32,6 @@ async fn main() -> Result<()> {
                 .arg(arg!(<VALUE>).help("A String vaule").required(true))
                 .arg(
                     arg!(-a --addr <ipport> "example: 127.0.0.1:4000")
-                        .required(true)
                         .default_value("127.0.0.1:4000"),
                 ),
         )
@@ -43,7 +41,6 @@ async fn main() -> Result<()> {
                 .arg(arg!(<KEY>).help("A String key").required(true))
                 .arg(
                     arg!(-a --addr <ipport> "example: 127.0.0.1:4000")
-                        .required(true)
                         .default_value("127.0.0.1:4000"),
                 ),
         )
