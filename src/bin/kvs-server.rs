@@ -1,6 +1,6 @@
 use clap::{arg, command, ArgMatches};
 //use kvs::thread_pool::{NaiveThreadPool, RayonThreadPool, SharedQueueThreadPool, ThreadPool};
-use kvs::{EngineType, KVStoreError, KvServer, KvStore, KvsEngine, Result, SledKvStore};
+use kvs::{EngineType, KVStoreError, KvServer, KvStore, KvsEngine, Result, SledKvStore, thread_pool::RayonThreadPool};
 use log::{info, LevelFilter};
 use std::env;
 
@@ -50,7 +50,7 @@ async fn init(matches: ArgMatches) -> Result<()> {
 
     match engine_type {
         EngineType::KvStore => run_server(
-            KvStore::open(env::current_dir()?.join(EngineType::KvStore.to_string()),num_cpus::get().try_into().unwrap())?,
+            KvStore::<RayonThreadPool>::open(env::current_dir()?.join(EngineType::KvStore.to_string()),num_cpus::get().try_into().unwrap())?,
             addr,
         ).await,
         EngineType::SledKvStore => run_server(

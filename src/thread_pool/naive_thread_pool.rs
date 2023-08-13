@@ -2,7 +2,9 @@ use crate::{thread_pool::ThreadPool, Result};
 use std::thread;
 //this implementation is not going to reuse threads between jobs.
 
+#[derive(Clone)]
 pub struct NaiveThreadPool;
+
 
 impl ThreadPool for NaiveThreadPool {
     fn new(_: usize) -> Result<Self>

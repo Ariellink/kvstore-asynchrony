@@ -1,8 +1,10 @@
 use crate::{thread_pool::ThreadPool, Result};
+use std::sync::Arc;
 use rayon;
 
+#[derive(Clone)]
 pub struct RayonThreadPool {
-    raypool: rayon::ThreadPool,
+    raypool: Arc<rayon::ThreadPool>,
 }
 
 impl ThreadPool for RayonThreadPool {
@@ -10,11 +12,11 @@ impl ThreadPool for RayonThreadPool {
     where
         Self: Sized,
     {
-        let raypool = rayon::ThreadPoolBuilder::new()
+        let raypool = Arc::new(rayon::ThreadPoolBuilder::new()
             .num_threads(thread.try_into().unwrap())
             .build()
-            .unwrap();
-        Ok(RayonThreadPool { raypool })
+            .unwrap());
+        Ok(RayonThreadPool { raypool})
     }
 
     fn spawn<F>(&self, job: F)

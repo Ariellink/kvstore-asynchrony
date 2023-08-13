@@ -43,11 +43,11 @@ impl<E: KvsEngine + Sync> KvServer<E> {
         info!("serving request and listening on [{}]", addr);
         while let Ok((stream, _)) = listener.accept().await {
             let engine = self.engine.clone();
-            //tokio::spawn(async move {
+            tokio::spawn(async move {
                     info!("get in to the tokio spawn");
                     if let Err(e) = handle_connection(engine, stream).await {
                         error!("Unexpected error occurs when handling connection: {:?}", e);}
-                //});
+                });
         }
         Ok(())
     }

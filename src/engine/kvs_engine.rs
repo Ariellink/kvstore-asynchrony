@@ -1,5 +1,6 @@
 use crate::{Result, SledKvStore, KvStore}; //type in error.rs
 use async_trait::async_trait;
+use std::marker::Sync;
 
 /*
 * Client::get(&mut self, key: String) -> Box<Future<Item = Option<String>, Error = Error>
@@ -16,7 +17,7 @@ use async_trait::async_trait;
     /*using async keywords in rewriting trait methods */
 
 #[async_trait]
-pub trait KvsEngine: Clone + Send + 'static {
+pub trait KvsEngine: Clone + Send + 'static + Sync {
     async fn set(&self, key: String, value: String) -> Result<()>;
     async fn get(&self, key: String) -> Result<Option<String>>;
     async fn remove(&self, key: String) -> Result<()>;

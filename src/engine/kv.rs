@@ -10,11 +10,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 use std::{collections::hash_map::Entry, collections::HashMap, fs::File};
-
+use crate::thread_pool::ThreadPool;
 /*for aysnc*/
 use async_trait::async_trait;
 use tokio::sync::oneshot;
-use tokio::sync::Mutex;
+use std::sync::Mutex;
 use crossbeam::queue::ArrayQueue;
 
 #[derive(Debug)]
@@ -24,12 +24,13 @@ struct CommandPos {
     file_id: u64,
 }
 #[derive(Clone)]
-pub struct KvStore {
+pub struct KvStore <P:ThreadPool>{
     // key：String， vaule_metadata: CommandPos
     index: Arc<DashMap<String, CommandPos>>,
     //current_readers: Arc<RwLock<Reader>>,
     current_writer: Arc<Mutex<Writer>>,
-    reader_pool: Arc<ArrayQueue<Reader>>, //why arrayqueue?
+    reader_pool: Arc<ArrayQueue<Reader>>, 
+    thread_pool: P,
 } 
 
 pub struct Writer {
@@ -103,7 +104,7 @@ impl<T: Write + Seek> Write for BufWriterWithPos<T> {
     }
 }
 
-impl KvStore {
+impl <P: ThreadPool> KvStore<P> {
     //read all validate the files in current dir to get the vector of sorted file_ids
     fn sorted_file_ids(path: &Arc<PathBuf>) -> Result<Vec<u64>> {
         //get the every filepath and dir in the directory
@@ -139,7 +140,7 @@ impl KvStore {
     //env::current_dir()? -> PathBuf
     //open(parameter)：impl Into<PathBuf> trait, which means that para in open func must be transferred to PathBuf
 
-    pub fn open(open_path: impl Into<PathBuf>, concurrency: u32) -> Result<KvStore> {
+    pub fn open(open_path: impl Into<PathBuf>, concurrency: u32) -> Result<KvStore<P>> {
         let dir_path = Arc::new(open_path.into());
 
         fs::create_dir_all(&dir_path.as_path())?;
@@ -149,7 +150,7 @@ impl KvStore {
         // how to get current_file_id and current compaction_size
         // Update index and current_reader，as they have file_id mapping
         // Traverse all existing logfiles
-        let file_ids = KvStore::sorted_file_ids(&dir_path)?;
+        let file_ids = KvStore::<P>::sorted_file_ids(&dir_path)?;
         let mut current_file_id = 0;
 
         if let Some(id) = file_ids.last() {
@@ -249,10 +250,13 @@ impl KvStore {
         }
         reader_pool.push(reader);
 
+        let thread_pool = P::new(concurrency as usize)?;
+        
         let store = KvStore {
             index,
             reader_pool,
             current_writer,
+            thread_pool,
         };
 
         Ok(store)
@@ -260,7 +264,7 @@ impl KvStore {
 }
 
 #[async_trait]
-impl KvsEngine for KvStore {
+impl<P: ThreadPool> KvsEngine for KvStore<P> {
     async fn set(&self, key: String, value: String) -> Result<()> {
         info!("in set func");
         let writer = Arc::clone(&self.current_writer);
@@ -268,9 +272,9 @@ impl KvsEngine for KvStore {
         let (tx, rx) = oneshot::channel();
         info!("tx = {:#?}, rx = {:#?}, channel has been created",tx, rx);
         
-        let handle = tokio::spawn(async move {
+        self.thread_pool.spawn(move || {
             println!("in set func - tokio task");
-            let mut lock = writer.lock().await;
+            let mut lock = writer.lock().unwrap();
             println!("lock has been acquired");
             let result = lock.set(key, value);
 
@@ -281,12 +285,7 @@ impl KvsEngine for KvStore {
             info!("in set func - tokio task - done");
         });
         
-        let r = handle.await;
 
-        info!("r = {:#?}", r);
-
-        //}
-        //Ok(())
         match rx.await {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) => Err(e),
@@ -306,7 +305,7 @@ impl KvsEngine for KvStore {
         // check if the key exists in the index on the instance - Some - None
         // if the key exists, go to the read process, read_command()返回Result<Option<String>, KVStoreError>
         // if the key does not exist, return Ok(None)
-        tokio::spawn(async move {
+        self.thread_pool.spawn(move || {
             let res = {
                 if let Some(val) = index.get(&key){
                     //read process
@@ -331,8 +330,8 @@ impl KvsEngine for KvStore {
     async fn remove(&self, key: String) -> Result<()> {
         let writer = Arc::clone(&self.current_writer);
         let (tx, rx) = oneshot::channel();
-        tokio::spawn (async move {
-            let mut lock = writer.lock().await;
+        self.thread_pool.spawn (move || {
+            let mut lock = writer.lock().unwrap();
             let result = lock.remove(key);
             if tx.send(result).is_err() {
                 error!("receiving end is drop during remove operation");

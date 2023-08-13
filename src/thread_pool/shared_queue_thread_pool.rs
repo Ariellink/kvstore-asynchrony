@@ -1,13 +1,15 @@
 use crate::thread_pool::ThreadPool;
 use crate::Result;
+use std::cell::RefCell;
 use std::panic;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+#[derive(Clone)]
 pub struct SharedQueueThreadPool {
-    workers: Vec<Worker>,
-    sender: Option<mpsc::Sender<Message>>,
+    workers: Arc<Mutex<Vec<Worker>>>,
+    sender: Arc<Mutex<Option<mpsc::Sender<Message>>>>
 }
 
 pub enum Message {
@@ -25,7 +27,7 @@ impl ThreadPool for SharedQueueThreadPool {
         //if num of thread was specified less than 1, invoke panic
         assert!(thread_num > 0);
 
-        let mut workers = Vec::with_capacity(thread_num.try_into().unwrap());
+        let mut workers = Arc::new(Mutex::new(Vec::with_capacity(thread_num.try_into().unwrap())));
 
         let (sender, receiver) = mpsc::channel();
 
@@ -38,12 +40,12 @@ impl ThreadPool for SharedQueueThreadPool {
             //wrap it as Mutex, Mutex will ensure that only one worker gets a job from the receiver at a time.
             //In SharedQueueThreadPool::new, we put the receiver in an Arc and a Mutex. For each new worker, we clone the Arc to bump the reference count so the workers can share ownership of the receiver.
             let worker = Worker::new(id.try_into().unwrap(), Arc::clone(&receiver))?;
-            workers.push(worker);
+            workers.lock().unwrap().push(worker);
         }
 
         Ok(SharedQueueThreadPool {
             workers,
-            sender: Some(sender), //when sender was used as member of the SharedQueueThreadPool, Sender<T> inferred to be Sender<Job>
+            sender: Arc::new(Mutex::new(Some(sender))), //when sender was used as member of the SharedQueueThreadPool, Sender<T> inferred to be Sender<Job>
         })
     }
 
@@ -54,7 +56,7 @@ impl ThreadPool for SharedQueueThreadPool {
         // warp the closure as Box pointer
         let message = Message::NewJob(Box::new(job));
         //sender of the SharedQueueThreadPool sends the job, and
-        self.sender.as_ref().unwrap().send(message).unwrap();
+        self.sender.lock().unwrap().as_ref().unwrap().send(message).unwrap();
     }
 }
 
@@ -63,9 +65,9 @@ impl ThreadPool for SharedQueueThreadPool {
 impl Drop for SharedQueueThreadPool {
     fn drop(&mut self) {
         println!("Sending terminate message to all workers.");
-
-        for _ in &mut self.workers {
-            if let Some(m) = &self.sender {
+        let mut sender =  self.sender.lock().unwrap();
+        for _ in &mut self.workers.lock().iter_mut(){
+            if let Some(m) = sender.as_mut() {
                 m.send(Message::Terminate).unwrap()
             }
             //self.sender.as_ref().unwrap().send(Message::Terminate).unwrap();
@@ -73,7 +75,7 @@ impl Drop for SharedQueueThreadPool {
 
         println!("Shutting down all workers.");
 
-        for worker in &mut self.workers {
+        for worker in &mut self.workers.lock().unwrap().iter_mut() {
             //explictly drop the sender before waiting for threads to finish
             //drop(self.sender.take()); //then all calls to recv() in the loop with return an error
             //-> change the worker loop to handle the errors
