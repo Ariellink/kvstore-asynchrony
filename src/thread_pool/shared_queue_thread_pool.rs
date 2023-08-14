@@ -1,6 +1,5 @@
 use crate::thread_pool::ThreadPool;
 use crate::Result;
-use std::cell::RefCell;
 use std::panic;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};

@@ -17,7 +17,7 @@ use std::marker::Sync;
     /*using async keywords in rewriting trait methods */
 
 #[async_trait]
-pub trait KvsEngine: Clone + Send + 'static + Sync {
+pub trait KvsEngine: Clone + Send + 'static {
     async fn set(&self, key: String, value: String) -> Result<()>;
     async fn get(&self, key: String) -> Result<Option<String>>;
     async fn remove(&self, key: String) -> Result<()>;

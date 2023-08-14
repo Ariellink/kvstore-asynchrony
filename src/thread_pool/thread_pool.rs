@@ -1,7 +1,7 @@
 use crate::Result;
 use std::marker::Sync;
 
-pub trait ThreadPool: Clone + Send + 'static + Sync{
+pub trait ThreadPool: Clone + Send + 'static + Sync {
     //creates a new thread pool, immediately spawning the specified number of threads.
     //returns an error if any thread fails to spawn. All previously-spawned threads are terminated.
     fn new(thread: usize) -> Result<Self>
