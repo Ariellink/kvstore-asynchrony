@@ -245,9 +245,9 @@ impl KvStore {
         }));
         let reader_pool = Arc::new(ArrayQueue::new(concurrency as usize));
         for _ in 1..concurrency {
-            reader_pool.push(reader.clone());
+            let _ = reader_pool.push(reader.clone());
         }
-        reader_pool.push(reader);
+        let _ = reader_pool.push(reader);
 
         let store = KvStore {
             index,
