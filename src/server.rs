@@ -6,7 +6,7 @@ use tokio_util::codec::{FramedRead,FramedWrite,LengthDelimitedCodec};
 use log::{debug, error, info};
 use std::fmt;
 use std::time::SystemTime;
-use std::marker::Sync;
+
 
 pub enum EngineType {
     KvStore,
@@ -25,12 +25,12 @@ impl fmt::Display for EngineType {
 
 pub struct KvServer<E>
 where
-    E: KvsEngine + Sync,
+    E: KvsEngine,
 {
     engine: E,
 }
 
-impl<E: KvsEngine + Sync> KvServer<E> {
+impl<E: KvsEngine> KvServer<E> {
     // construct
     pub fn new(engine: E) -> Self {
         KvServer { engine }

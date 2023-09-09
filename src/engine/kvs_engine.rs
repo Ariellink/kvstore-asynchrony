@@ -1,4 +1,4 @@
-use crate::{Result, SledKvStore, KvStore}; //type in error.rs
+use crate::Result; //type in error.rs
 use async_trait::async_trait;
 
 /*
