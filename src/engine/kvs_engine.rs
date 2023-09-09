@@ -1,7 +1,6 @@
 use crate::{Result, SledKvStore, KvStore}; //type in error.rs
 use async_trait::async_trait;
 use std::marker::Sync;
-
 /*
 * Client::get(&mut self, key: String) -> Box<Future<Item = Option<String>, Error = Error>
 * Client::get(&mut self, key: String) -> future::SomeExplicitCombinator<...>
